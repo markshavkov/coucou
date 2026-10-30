@@ -104,7 +104,7 @@ final class FlowStore: ObservableObject {
     }
 
     /// Parakeet (once downloaded) or the Mac's recognizer.
-    @Published var engine: FlowEngine = FlowEngine(rawValue: UserDefaults.standard.string(forKey: FlowStore.engineKey) ?? "") ?? .parakeet {
+    @Published var engine: FlowEngine = FlowEngine(rawValue: UserDefaults.standard.string(forKey: FlowStore.engineKey) ?? "").flatMap { Parakeet.isSupported || $0 != .parakeet ? $0 : nil } ?? (Parakeet.isSupported ? .parakeet : .apple) {
         didSet {
             UserDefaults.standard.set(engine.rawValue, forKey: Self.engineKey)
             if engine == .parakeet { Parakeet.shared.preload() }

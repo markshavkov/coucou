@@ -1,6 +1,8 @@
 #if !APPSTORE
 import AVFoundation
+#if canImport(FluidAudio)
 @preconcurrency import FluidAudio
+#endif
 import os
 
 /// How Flow dictation turns the voice into text.
@@ -16,12 +18,17 @@ enum FlowEngine: String, CaseIterable, Identifiable {
 /// Parakeet (speech to text) and the speaker diarizer of the Notetaker: their models, downloaded
 /// once from Hugging Face when the user clicks Download in Coucou Flow → Settings (≈ 650 MB),
 /// kept in Application Support/NotchBuddy/Models, then everything runs on this Mac.
+///
+/// Without the FluidAudio package (removed from project.yml in this fork) Parakeet stays
+/// `.unsupported`: Flow dictation uses the Mac's own recognition and the Notetaker is off.
 @MainActor
 final class Parakeet: ObservableObject {
     static let shared = Parakeet()
 
+    #if canImport(FluidAudio)
     /// Parakeet Ultra: v3's 25 languages, more accurate than v3, same speed.
     nonisolated static let version: AsrModelVersion = .ultra
+    #endif
 
     enum State: Equatable {
         /// Intel Mac: the models need the Neural Engine of Apple silicon.
@@ -34,12 +41,14 @@ final class Parakeet: ObservableObject {
 
     @Published private(set) var state: State = .missing
 
+    #if canImport(FluidAudio)
     private var loading: Task<AsrManager, Error>?
+    #endif
 
     private init() { refresh() }
 
     nonisolated static var isSupported: Bool {
-        #if arch(arm64)
+        #if canImport(FluidAudio) && arch(arm64)
         return true
         #else
         return false
@@ -52,6 +61,7 @@ final class Parakeet: ObservableObject {
         HookServer.supportDir.appendingPathComponent("Models", isDirectory: true)
     }
 
+    #if canImport(FluidAudio)
     nonisolated static var asrDirectory: URL {
         modelsRoot.appendingPathComponent(AsrModels.defaultCacheDirectory(for: version).lastPathComponent, isDirectory: true)
     }
@@ -59,6 +69,9 @@ final class Parakeet: ObservableObject {
     nonisolated static var installed: Bool {
         AsrModels.modelsExist(at: asrDirectory, version: version)
     }
+    #else
+    nonisolated static var installed: Bool { false }
+    #endif
 
     var isReady: Bool { state == .ready }
 
@@ -84,7 +97,7 @@ final class Parakeet: ObservableObject {
                 }
                 state = .ready
                 appendAppLog("nb.log", "[Parakeet] models downloaded")
-                _ = try? await manager()
+                preload()
             } catch {
                 appendAppLog("nb.log", "[Parakeet] download failed: \(error.localizedDescription)")
                 state = .failed(error.localizedDescription)
@@ -92,6 +105,7 @@ final class Parakeet: ObservableObject {
         }
     }
 
+    #if canImport(FluidAudio)
     nonisolated private static func fetchModels(progress: @escaping @Sendable (Double) -> Void) async throws {
         try FileManager.default.createDirectory(at: modelsRoot, withIntermediateDirectories: true)
         _ = try await AsrModels.download(to: asrDirectory, version: version, progressHandler: { update in
@@ -106,15 +120,23 @@ final class Parakeet: ObservableObject {
         let diarizer = OfflineDiarizerManager()
         try await diarizer.prepareModels(directory: modelsRoot)
     }
+    #else
+    nonisolated private static func fetchModels(progress: @escaping @Sendable (Double) -> Void) async throws {
+        throw ParakeetUnavailable()
+    }
+    #endif
 
     /// Removes the models from this Mac (Settings → Remove).
     func remove() {
+        #if canImport(FluidAudio)
         loading?.cancel()
         loading = nil
+        #endif
         try? FileManager.default.removeItem(at: Self.modelsRoot)
         refresh()
     }
 
+    #if canImport(FluidAudio)
     /// Loads Parakeet once; later calls get the same instance.
     func manager() async throws -> AsrManager {
         if let loading { return try await loading.value }
@@ -152,6 +174,18 @@ final class Parakeet: ObservableObject {
         var decoder = TdtDecoderState.make(decoderLayers: await asr.decoderLayerCount)
         return try await asr.transcribe(audio, decoderState: &decoder)
     }
+    #else
+    func preload() {}
+
+    func transcribe(_ samples: [Float]) async throws -> String {
+        throw ParakeetUnavailable()
+    }
+    #endif
+}
+
+/// Thrown when Coucou is built without the FluidAudio package.
+struct ParakeetUnavailable: LocalizedError {
+    var errorDescription: String? { String(localized: "hub.engine.unsupported") }
 }
 
 // MARK: - 16 kHz mono

@@ -1,7 +1,9 @@
 #if !APPSTORE
 import AppKit
 import AVFoundation
+#if canImport(FluidAudio)
 @preconcurrency import FluidAudio
+#endif
 import UniformTypeIdentifiers
 #if canImport(FoundationModels)
 import FoundationModels
@@ -245,6 +247,7 @@ final class NoteTaker: ObservableObject {
             guard FileManager.default.fileExists(atPath: micURL.path) else {
                 throw NSError(domain: "Notetaker", code: 1, userInfo: [NSLocalizedDescriptionKey: String(localized: "notes.error.no-audio")])
             }
+            #if canImport(FluidAudio)
             let asr = try await Parakeet.shared.manager()
             var mine = try await Self.words(in: micURL, asr: asr)
             var theirs: [TimedWord] = []
@@ -274,6 +277,12 @@ final class NoteTaker: ObservableObject {
             } else {
                 built = NoteBuilder.build(mine: mine, others: theirs, turns: [], meName: me, personName: Self.personName)
             }
+            #else
+            // Built without FluidAudio: no transcription engine for the Notetaker.
+            _ = me
+            let built: (speakers: [NoteSpeaker], lines: [NoteLine])
+            throw ParakeetUnavailable()
+            #endif
             // Renamed (or deleted) meanwhile: write onto what is there now.
             guard var current = self.note(id) else { return }
             current.speakers = built.speakers
@@ -318,6 +327,7 @@ final class NoteTaker: ObservableObject {
         FileManager.default.fileExists(atPath: Self.folder(for: id).appendingPathComponent("mic.wav").path)
     }
 
+    #if canImport(FluidAudio)
     nonisolated private static func words(in url: URL, asr: AsrManager) async throws -> [TimedWord] {
         var decoder = TdtDecoderState.make(decoderLayers: await asr.decoderLayerCount)
         let result: ASRResult
@@ -340,6 +350,7 @@ final class NoteTaker: ObservableObject {
                         embedding: $0.embedding)
         }
     }
+    #endif
 
     /// The 20 ms levels of a recording, read a second at a time (a long call never sits in memory).
     nonisolated private static func levels(_ url: URL) -> [Float] {
