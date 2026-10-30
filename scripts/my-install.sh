@@ -24,19 +24,24 @@ fi
 
 # The team is the OU of the Apple Development certificate in the login keychain.
 CERT=$(security find-certificate -c "Apple Development" -p 2>/dev/null || true)
-if [ -z "${CERT}" ]; then
-  echo "No Apple Development certificate: Xcode → Settings → Accounts → Manage Certificates → + → Apple Development." >&2
-  exit 1
+if [ -n "${CERT}" ]; then
+  IDENTITY="Apple Development"
+  TEAM=$(printf '%s\n' "${CERT}" | openssl x509 -noout -subject -nameopt multiline | awk -F' = ' '/organizationalUnitName/ {print $2; exit}')
+  echo "Signing with team ${TEAM}"
+else
+  # Ad-hoc signature: runs, but macOS asks for its permissions again after every build.
+  IDENTITY="-"
+  TEAM=""
+  echo "No Apple Development certificate, signing ad hoc (permissions reset after each build)." >&2
+  echo "Fix: Xcode → Settings → Accounts → Manage Certificates → + → Apple Development." >&2
 fi
-TEAM=$(printf '%s\n' "${CERT}" | openssl x509 -noout -subject -nameopt multiline | awk -F' = ' '/organizationalUnitName/ {print $2; exit}')
-echo "Signing with team ${TEAM}"
 
 echo "Building..."
 cd "${REPO_ROOT}/NotchBuddy"
 xcodegen >/dev/null
 xcodebuild -scheme NotchBuddy -configuration Debug -derivedDataPath "${DERIVED}" -quiet \
   CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES CODE_SIGN_STYLE=Manual \
-  CODE_SIGN_IDENTITY="Apple Development" DEVELOPMENT_TEAM="${TEAM}" PROVISIONING_PROFILE_SPECIFIER= \
+  CODE_SIGN_IDENTITY="${IDENTITY}" DEVELOPMENT_TEAM="${TEAM}" PROVISIONING_PROFILE_SPECIFIER= \
   CODE_SIGN_ENTITLEMENTS=Resources/Coucou.entitlements SWIFT_OPTIMIZATION_LEVEL=-O \
   build
 
